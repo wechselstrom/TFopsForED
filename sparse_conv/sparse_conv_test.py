@@ -1,15 +1,14 @@
 import tensorflow as tf
 import numpy as np
 import scipy.spatial
-import mixedSparseToDenseGrad
+import mixedSparseToDense
 import sparseConv
 
 f = sparseConv.sparse_conv
+g = mixedSparseToDense.mixed_sparse_to_dense
 
 class SparseConvTest(tf.test.TestCase):
   def setup(self):
-    sparseToDense_module = tf.load_op_library('build/libmixedSparseToDense.so')
-    g = sparseToDense_module.mixed_sparse_to_dense
 
     def sparseConv(indices, values, pairs, kernel, shape):
         convedVals = f(indices, values, pairs, kernel)
