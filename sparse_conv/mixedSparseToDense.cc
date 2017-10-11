@@ -1,3 +1,4 @@
+#define EIGEN_USE_THREADS
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/shape_inference.h"
@@ -11,10 +12,12 @@ using CPUDevice = Eigen::ThreadPoolDevice;
 
 
 REGISTER_OP("MixedSparseToDense")
-    .Input("indices_in: int64")
-    .Input("values_in: float32")
-    .Input("shape: int64")
-    .Output("dense: float32")
+    .Attr("T: {float, double, int32, int64}")
+    .Attr("TIDX: {int32, int64}")
+    .Input("indices_in: TIDX")
+    .Input("values_in: T")
+    .Input("shape: TIDX")
+    .Output("dense: T")
     //.Attr("threshold: int64")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
 
@@ -26,12 +29,12 @@ REGISTER_OP("MixedSparseToDense")
     .Doc(R"doc(
          Mixed Sparse To Dense operation.)doc");
 
-    class SparseConvOp : public OpKernel {
+template<typename Device, typename T, typename TIDX>
+class MixedSparseToDenseOp : public OpKernel {
 private:
-    bool strict_;
 
 public:
-    explicit SparseConvOp(OpKernelConstruction* context)
+    explicit MixedSparseToDenseOp(OpKernelConstruction* context)
         : OpKernel(context)
     {
     }
@@ -81,11 +84,12 @@ public:
 
 
        
-       auto idcs = inp_indices->matrix<int64>();
-       auto vals = inp_values->matrix<float>();
-       auto shape_vec = shape->vec<int64>();
-       auto dsh = {shape_vec(0), shape_vec(1), shape_vec(2), shape_vec(3), shape_vec(4)};
-       auto out = dense->shaped<float, 5>(dsh);
+       auto idcs = inp_indices->matrix<TIDX>();
+       auto vals = inp_values->matrix<T>();
+       auto shape_vec = shape->vec<TIDX>();
+       auto dsh = {(int64) shape_vec(0), (int64) shape_vec(1), (int64)
+                   (int64) shape_vec(2), (int64) shape_vec(3), (int64) shape_vec(4)};
+       auto out = dense->shaped<T, 5>(dsh);
 
        for (int i=0; i<num_active; i++) {
            for (int j=0; j<num_channels; j++) {
@@ -98,4 +102,16 @@ public:
     }
 };
 
-REGISTER_KERNEL_BUILDER(Name("MixedSparseToDense").Device(DEVICE_CPU), SparseConvOp);
+//REGISTER_KERNEL_BUILDER(Name("MixedSparseToDense").Device(DEVICE_CPU), SparseConvOp);
+#define REGISTER_CPU(T,TIDX)                                          \
+      REGISTER_KERNEL_BUILDER(                                       \
+                    Name("MixedSparseToDense").Device(DEVICE_CPU).TypeConstraint<T>("T").TypeConstraint<TIDX>("TIDX"), \
+                    MixedSparseToDenseOp<CPUDevice, T, TIDX>);
+REGISTER_CPU(float, int32);
+REGISTER_CPU(double, int32);
+REGISTER_CPU(float, int64);
+REGISTER_CPU(double, int64);
+REGISTER_CPU(int32, int32);
+REGISTER_CPU(int64, int32);
+REGISTER_CPU(int32, int64);
+REGISTER_CPU(int64, int64);

@@ -1,22 +1,27 @@
+#define EIGEN_USE_THREADS
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/shape_inference.h"
+#include "tensorflow/core/util/work_sharder.h"
+#include "tensorflow/core/lib/core/threadpool.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
+#include "sparse_conv_op.h"
 
-#define NUM_COLUMNS 5
 
 using namespace tensorflow;
 
 
 using CPUDevice = Eigen::ThreadPoolDevice;
+using GPUDevice = Eigen::GpuDevice;
 
 
 REGISTER_OP("SparseConv")
+    .Attr("T: {float, double}")
     .Input("indices_in: int64")
-    .Input("values_in: float32")
+    .Input("values_in: T")
     .Input("pairs: int64")
-    .Input("kernel: float32")
-    .Output("values_out: float32")
+    .Input("kernel: T")
+    .Output("values_out: T")
     //.Attr("threshold: int64")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
 
@@ -50,17 +55,69 @@ REGISTER_OP("SparseConvGrad")
     .Doc(R"doc(
          Sparse convolution operation.)doc");
 
-// end of registering, start of classes
+// end of registering ops, start of functors
+
+
+template <typename T>
+struct SparseConvFunctor<CPUDevice, T> {
+
+  void operator()(OpKernelContext* context, int num_pairs, int num_k_1, int num_k_2, int num_k_3,
+                  int num_channels, int num_channels_new,
+                  typename TTypes<const int64>::ConstMatrix &idcs,
+                  typename TTypes<T>::ConstMatrix &vals,
+                  typename TTypes<const int64>::ConstMatrix &ps,
+                  typename TTypes<T,5>::ConstTensor &ws,
+                  typename TTypes<T>::Matrix &ovals) {
+      //num_pairs
+       auto work = [&](int start, int limit) {
+           for (int i=start; i<limit; i++) {
+               //idcs(ps(i,*), 0) is batch, thus we ignore it.
+               
+               int x1 = ps(i,0);
+               int x2 = ps(i,1);
+               #define COMPUTE_STEP(a, b) { \
+                   long d1 = idcs(b, 1) + (int) num_k_1/2 - idcs(a, 1) ;\
+                   long d2 = idcs(b, 2) + (int) num_k_2/2 - idcs(a, 2) ;\
+                   long d3 = idcs(b, 3) + (int) num_k_3/2 - idcs(a, 3) ;\
+                   for (int j=0; j<num_channels_new; j++) {\
+                       for (int k=0; k<num_channels; k++) {\
+                           ovals(a, j) += vals(b, k)*ws(d1, d2, d3, k, j);\
+                       }\
+                   }\
+               } 
+               //b,k :k, j
+               COMPUTE_STEP(x1, x2);
+               if (x1!=x2) {
+                   COMPUTE_STEP(x2, x1);
+               }
+           }
+       };
+       
+       //auto threadpool = tensorflow::thread::ThreadPool();
+       const int default_cost = 1000;
+       const DeviceBase::CpuWorkerThreads& worker_threads =
+            *(context->device()->tensorflow_cpu_worker_threads());
+       Shard(worker_threads.num_threads, worker_threads.workers,
+               num_pairs, num_channels_new*num_channels*default_cost, work);
+  }
+};
+// end of functors, start of classes
     
+template <typename Device, typename T>
 class SparseConvOp : public OpKernel {
 private:
-    bool strict_;
+    std::unique_ptr<thread::ThreadPool> thread_pool_;
+
 
 public:
     explicit SparseConvOp(OpKernelConstruction* context)
-        : OpKernel(context)
-    {
-    }
+        : OpKernel(context)/*,
+        thread_pool_(new thread::ThreadPool(
+            context->env(), ThreadOptions(),
+            strings::StrCat("reader_thread_",
+                            SanitizeThreadSuffix(def().name())),
+            4, false))*/
+    {}
 
     void Compute(OpKernelContext* ctx) override
     {
@@ -119,30 +176,15 @@ public:
                &out_values));
        auto ps = pairs->matrix<int64>();
        auto idcs = inp_indices->matrix<int64>();
-       auto ws = kernel->tensor<float, 5>();
-       auto vals = inp_values->matrix<float>();
-       auto ovals = out_values->matrix<float>();
+       auto ws = kernel->tensor<T, 5>();
+       auto vals = inp_values->matrix<T>();
+       auto ovals = out_values->matrix<T>();
 
-       for (int i=0; i<num_pairs; i++) {
-           //idcs(ps(i,*), 0) is batch, thus we ignore it.
-           
-           int x1 = ps(i,0);
-           int x2 = ps(i,1);
-           #define COMPUTE_STEP(a, b) { \
-               long d1 = idcs(b, 1) + (int) num_k_1/2 - idcs(a, 1) ;\
-               long d2 = idcs(b, 2) + (int) num_k_2/2 - idcs(a, 2) ;\
-               long d3 = idcs(b, 3) + (int) num_k_3/2 - idcs(a, 3) ;\
-               for (int j=0; j<num_channels_new; j++) {\
-                   for (int k=0; k<num_channels; k++) {\
-                       ovals(a, j) += vals(b, k)*ws(d1, d2, d3, k, j);\
-                   }\
-               }\
-           }
-           COMPUTE_STEP(x1, x2);
-           if (x1!=x2) {
-               COMPUTE_STEP(x2, x1);
-           }
-       }
+
+       SparseConvFunctor<Device, T>()(ctx, num_pairs, num_k_1, num_k_2, num_k_3,
+                  num_channels, num_channels_new,
+                  idcs, vals, ps, ws, ovals
+               );
        
        
        ctx->set_output(0, *out_values);
@@ -150,7 +192,15 @@ public:
     }
 };
 
-REGISTER_KERNEL_BUILDER(Name("SparseConv").Device(DEVICE_CPU), SparseConvOp);
+#define REGISTER_CPU(T)                                          \
+      REGISTER_KERNEL_BUILDER(                                       \
+                    Name("SparseConv").Device(DEVICE_CPU).TypeConstraint<T>("T"), \
+                    SparseConvOp<CPUDevice, T>);
+REGISTER_CPU(float);
+REGISTER_CPU(double);
+
+
+//REGISTER_KERNEL_BUILDER(Name("SparseConv").Device(DEVICE_CPU), SparseConvOp);
 
 
 class SparseConvGradOp : public OpKernel {

@@ -6,20 +6,20 @@ import sparseConv
 
 f = sparseConv.sparse_conv
 g = mixedSparseToDense.mixed_sparse_to_dense
+def sparseConv(indices, values, pairs, kernel, shape):
+    convedVals = f(indices, values, pairs, kernel)
+    sh = np.concatenate([shape[:-1], [convedVals.shape[1].value]])
+    return g(indices, convedVals, sh)
+
+def sparseConvByDense(indices, values, pairs, kernel, shape):
+    data = g(indices, values, shape)
+    mask =  tf.reduce_all(tf.not_equal(data, 0,), axis=-1, keep_dims=True)
+    conved =  tf.nn.conv3d(data, kernel, [1,1,1,1,1], 'SAME')
+    return conved*tf.cast(mask,tf.float32)
 
 class SparseConvTest(tf.test.TestCase):
   def setup(self):
 
-    def sparseConv(indices, values, pairs, kernel, shape):
-        convedVals = f(indices, values, pairs, kernel)
-        sh = np.concatenate([shape[:-1], [convedVals.shape[1].value]])
-        return g(indices, convedVals, sh)
-
-    def sparseConvByDense(indices, values, pairs, kernel, shape):
-        data = g(indices, values, shape)
-        mask =  tf.reduce_all(tf.not_equal(data, 0,), axis=-1, keep_dims=True)
-        conved =  tf.nn.conv3d(data, kernel, [1,1,1,1,1], 'SAME')
-        return conved*tf.cast(mask,tf.float32)
 
     sh = np.int64([10, 8, 47, 48, 20])
     indices = np.int64(np.random.random((10000, len(sh)-1))*sh[:-1])
@@ -35,11 +35,23 @@ class SparseConvTest(tf.test.TestCase):
     W = tf.constant(np.float32(np.random.random([3, 3, 3, sh[-1], 25])))
     self.result = sparseConv(indices, values, pairs, W, sh)
     self.target = sparseConvByDense(indices, values, pairs, W, sh)
-    self.oldvalues = values
-    self.kernel=W
+    self.oldvalues = values; self.kernel=W; self.indices=indices;
+    self.values=values; self.pairs=pairs; self.sh = sh;
 
   def testSparseConv(self):
     self.setup()
+    with tf.device('/cpu:0'):
+      with self.test_session():
+        r1 = self.result.eval()
+        r2 = self.target.eval()
+        print('Values', np.abs(r1-r2).max())
+        self.assertAllClose(r1, r2, rtol=1e-03, atol=1e-03)
+  
+  def testSparsedouble(self):
+    self.setup()
+
+    self.result = sparseConv(self.indices, tf.cast(self.values, tf.float64),
+            self.pairs, tf.cast(self.kernel, tf.float64), self.sh)
     with tf.device('/cpu:0'):
       with self.test_session():
         r1 = self.result.eval()
