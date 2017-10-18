@@ -179,6 +179,9 @@ public:
        auto ws = kernel->tensor<T, 5>();
        auto vals = inp_values->matrix<T>();
        auto ovals = out_values->matrix<T>();
+       //auto k1 = kernel->flat_inner_dims<T>();
+       //std::cout << "meh " <<k1.NumDimensions << std::endl;
+       //bool x = decltype(t)::nothing;
 
 
        SparseConvFunctor<Device, T>()(ctx, num_pairs, num_k_1, num_k_2, num_k_3,

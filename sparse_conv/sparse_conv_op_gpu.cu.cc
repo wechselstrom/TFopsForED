@@ -4,10 +4,19 @@
 #define EIGEN_USE_GPU
 #define EIGEN_USE_THREADS
 
-#include "sparse_conv_op.h"
+#include "tensorflow/core/framework/op.h"
+#include "tensorflow/core/framework/op_kernel.h"
+#include "tensorflow/core/framework/shape_inference.h"
+#include "tensorflow/core/util/work_sharder.h"
+#include "tensorflow/core/lib/core/threadpool.h"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/util/cuda_kernel_helper.h"
 
+#include "sparse_conv_op.h"
+
 using namespace tensorflow;
+using GPUDevice = Eigen::GpuDevice;
+
 
 #define EIGEN_USE_GPU
 
@@ -42,7 +51,6 @@ struct SparseConvFunctor<GPUDevice, T> {
 };
 
 // Instantiate functors for the types of OpKernels registered.
-typedef Eigen::GpuDevice GPUDevice;
 template struct SparseConvFunctor<GPUDevice, float>;
 template struct SparseConvFunctor<GPUDevice, int32>;
 

@@ -65,8 +65,8 @@ class SparseConvTest(tf.test.TestCase):
     grad_dense = tf.gradients(self.target, self.oldvalues)
     with tf.device('/cpu:0'):
       with self.test_session():
-        r1 = self.result[0].eval()
-        r2 = self.target[0].eval()
+        r1 = grad_sparse[0].eval()
+        r2 = grad_dense[0].eval()
         print('ValuesGrad:',np.abs(r1-r2).max())
         self.assertAllClose(r1, r2, rtol=1e-03, atol=1e-03)
   
@@ -76,8 +76,8 @@ class SparseConvTest(tf.test.TestCase):
     grad_dense = tf.gradients(self.target, self.kernel)
     with tf.device('/cpu:0'):
       with self.test_session():
-        r1 = self.result[0].eval()
-        r2 = self.target[0].eval()
+        r1 = grad_sparse[0].eval()
+        r2 = grad_dense[0].eval()
         print('KernelGrad:', np.abs(r1-r2).max())
         self.assertAllClose(r1, r2, rtol=1e-03, atol=1e-03)
 
