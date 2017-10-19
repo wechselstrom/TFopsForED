@@ -11,7 +11,7 @@ set(CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS}")
  
 include_directories(${Tensorflow_INCLUDE_DIRS})
 add_library(sparseConv SHARED sparse_conv_op.cc sparse_conv_op_gpu.cu.cc)
-add_library(mixedSparseToDense SHARED mixedSparseToDense.cc)
+add_library(mixedSparseToDense SHARED sparse_to_dense_op.cc)
  
 #include_directories(${Tensorflow_INCLUDE_DIRS})
 #add_library(inner_product_grad SHARED inner_product_grad.cc)
